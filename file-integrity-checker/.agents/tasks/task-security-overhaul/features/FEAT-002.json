@@ -1,0 +1,38 @@
+{
+  "id": "FEAT-002",
+  "type": "fix",
+  "description": "Close all authentication and authorization vulnerabilities: (A) Registration admin-escalation fix. (B) Create ownership middleware. (C) Apply IDOR protection across fileController, folderController, alertController, versionController, reportController, networkController, signatureController, userController (last-admin guard). (D) Create admin-only POST /api/users endpoint. All fixes are independent of FEAT-001 schema changes except that ownership checks for MonitoredFile must reference the createdBy field (which already exists).",
+  "status": "pending",
+  "steps": [
+    "1. Modify server/src/controllers/authController.js — register(): change the role assignment to ALWAYS set role='analyst' except for the very first user (userCount===0 => 'admin'). Remove the `assignedRole` variable that reads `role` from req.body. The line should be: const finalRole = userCount === 0 ? 'admin' : 'analyst'; (never use req.body.role).",
+    "2. Create server/src/middleware/ownership.js: export two functions. (a) assertOwnership(resource, ownerField='createdBy'): async middleware factory that takes a Mongoose model and calls next() if req.user.role==='admin' OR resource[ownerField].toString()===req.user._id.toString(), else res.status(403). (b) assertFolderAccess(folder, req): pure function (not middleware) returning true/false — used inside controllers when the folder is already fetched. Also export a helper filterByOwner(query, req) that adds createdBy:req.user._id to query when role!=='admin'.",
+    "3. Modify server/src/controllers/folderController.js: (a) getFolderById: after finding folder, call assertFolderAccess; if false return 403. (b) getFolderFiles: fetch folder first, assertFolderAccess, then query files. (c) deleteFolder: assertFolderAccess. (d) createBaseline: assertFolderAccess. (e) scanFolder: assertFolderAccess. (f) getFolders already has owner filter — keep it.",
+    "4. Modify server/src/controllers/fileController.js: (a) getFileById: after findById, check owner (file.createdBy.toString()===req.user._id.toString() || role==='admin'), else 403. (b) deleteFile: same ownership check. (c) verifyUploadedFile: file is uploaded temp — no ownership check needed (user uploads fresh). (d) getFiles already has createdBy filter for non-admins — keep it.",
+    "5. Modify server/src/controllers/alertController.js: (a) getAlerts: add filterByOwner using SecurityAlert.createdBy field for non-admins. (b) markRead: fetch alert, check ownership OR admin. (c) resolveAlert: fetch alert, check ownership OR admin. (d) deleteAlert: fetch alert, check ownership OR admin. (e) markAllRead: scope to { createdBy: req.user._id } for non-admin users.",
+    "6. Modify server/src/controllers/versionController.js: (a) getFileVersions: fetch MonitoredFile first, apply ownership check. (b) getVersionById: same. (c) compareVersions: same.",
+    "7. Modify server/src/controllers/reportController.js: (a) downloadReport: fetch report, check generatedBy===req.user._id || admin, else 403. (b) deleteReport: same. (c) generateReport: when folderId provided, verify folder ownership/admin before generating.",
+    "8. Modify server/src/controllers/networkController.js: (a) getResultById: fetch record, check createdBy===req.user._id || admin, else 403.",
+    "9. Modify server/src/controllers/signatureController.js: (a) getSignatureById: fetch, check createdBy===req.user._id || admin. (b) Already scoped in getSignatures — keep.",
+    "10. Modify server/src/controllers/userController.js: (a) deleteUser: before deleting, count remaining admin users. If user to be deleted is admin AND adminCount===1, return 400 'Cannot delete the last administrator'. (b) updateUser: if changing role from admin and adminCount===1, return 400 'Cannot demote the last administrator'. (c) toggleUserStatus: if deactivating an admin and adminCount===1, return 400 'Cannot deactivate the last administrator'.",
+    "11. Modify server/src/controllers/monitoringController.js: (a) start: fetch folder, check folder.createdBy===req.user._id || admin. (b) stop: same. (c) pause: same. (d) resume: same. (e) getStatus: for non-admin, filter allFolders to req.user._id only.",
+    "12. Create POST /api/users route in server/src/routes/users.js: add router.post('/', userController.createUser). This route already has authorize('admin') on the router level so it is automatically protected. Add userController.createUser in userController.js: accepts {name, email, password, role} (role can be 'admin' or 'analyst' when created by admin), creates user with role as specified, returns 201.",
+    "13. Run: cd server && npm test — server syntax check. Verify no require errors."
+  ],
+  "acceptance_criteria": [
+    "authController.register() never reads role from req.body for public registration.",
+    "POST /api/auth/register with {role:'admin'} creates user with role='analyst' (unless first user).",
+    "ownership.js exports assertOwnership, assertFolderAccess, filterByOwner.",
+    "GET /api/folders/:id with another user's folder ID returns 403.",
+    "GET /api/files/:id with another user's file ID returns 403.",
+    "GET /api/alerts returns only the authenticated user's alerts for analysts.",
+    "Deleting the last admin account returns 400.",
+    "POST /api/users (admin-only) creates a user with specified role."
+  ],
+  "verification": [
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\server' && node -e \"const c=require('./src/controllers/authController'); const src=require('fs').readFileSync('./src/controllers/authController.js','utf8'); console.log('No req.body.role in register:', !src.includes(\\\"role === 'admin'\\\") || src.includes(\\\"userCount === 0\\\"));\"",
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\server' && node -e \"require('./src/middleware/ownership'); console.log('ownership.js OK');\"",
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\server' && npm test 2>&1 | tail -20"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

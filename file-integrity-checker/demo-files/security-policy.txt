@@ -1,0 +1,5 @@
+﻿SECURITY POLICY
+==============
+1. All files must be integrity-checked.
+2. SHA-256 is the approved hash algorithm.
+3. Unauthorized modifications will be flagged.

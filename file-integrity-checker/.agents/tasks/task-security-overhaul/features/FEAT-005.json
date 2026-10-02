@@ -1,0 +1,38 @@
+{
+  "id": "FEAT-005",
+  "type": "feat",
+  "description": "Upload security hardening, environment configuration, tests, gitignore update, and frontend fixes. Independent of FEAT-001/002/003/004 for the env/frontend portions. Depends on FEAT-001 for test assertions about baselineSha256. This is the last feature.",
+  "status": "pending",
+  "steps": [
+    "1. Modify server/src/app.js: remove the line 'app.use('/uploads', express.static(config.upload.dir))'. Remove the '/uploads' proxy from client/vite.config.js. Add an authenticated download route: in server/src/routes/files.js add GET /:id/download — protect with auth, look up MonitoredFile by ID, check ownership/admin, verify file is isUploaded:true, stream the uploadedPath to the response using res.sendFile() with an absolute path. Set Content-Disposition: attachment header.",
+    "2. Modify server/src/config/database.js: change connectDB so the in-memory MongoDB fallback ONLY activates when USE_MEMORY_DB=true in env. Otherwise on primary connection failure: log the error and call process.exit(1). This prevents accidental data loss in production. Update .env.example to document USE_MEMORY_DB=true for dev without MongoDB.",
+    "3. Create client/.env.example: VITE_API_URL=http://localhost:5000/api, VITE_SOCKET_URL=http://localhost:5000. Modify client/src/services/api.js: change baseURL from '/api' to import.meta.env.VITE_API_URL || '/api' so it works both with Vite proxy (dev) and with explicit URL (production). Modify client/src/services/socket.js: change hardcoded 'http://localhost:5000' to import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000'.",
+    "4. Modify client/src/pages/RegisterPage.jsx: verify there is no role selector field in the form (inspection confirms there is none — just document in the plan that it is already clean). If any hidden field or state variable named 'role' exists in the form data sent to authAPI.register, remove it. Confirmed from inspection: form only has {name, email, password, confirm} — no role field. The register() call passes {name, email, password} — already clean. Add a comment in RegisterPage.jsx confirming analyst-only registration.",
+    "5. Update .gitignore at project root: add entries for server/.env, client/.env, *.pem, *.key, server/node_modules, client/node_modules, .agents/ (exclude FEAT artifacts from commits), server/__tests__/fixtures/ (if created).",
+    "6. Update server/.env.example (the file at the project root that already exists): add USE_MEMORY_DB=false entry and a note. Also add USE_MEMORY_DB=true comment for dev without MongoDB.",
+    "7. Add jest config in server/package.json: add testTimeout: 30000 to the jest config block.",
+    "8. Create server/__tests__/hash.test.js with these test cases: (a) calculateFileHash: create a temp file with known content, hash it, assert matches known SHA-256. (b) calculateBufferHash: hash a buffer of known bytes, assert correct hex. (c) compareHashes: identical hashes return true, different lengths return false, different hashes return false. (d) validatePath: path within root returns true, path outside root returns false, path traversal attempt returns false. Clean up temp files in afterAll.",
+    "9. Create server/__tests__/signature.test.js with these test cases: (a) generateKeyPair returns objects with publicKey and privateKey as PEM strings. (b) signBuffer + verifyBufferSignature round-trip: sign a buffer, verify with public key — returns true. (c) verifyBufferSignature with wrong public key returns false. (d) Tampered data fails verification. All tests use in-memory key gen (no DB calls).",
+    "10. Create server/__tests__/auth.test.js with these test cases using supertest + mongodb-memory-server: (a) POST /api/auth/register with valid data creates user with role='analyst'. (b) POST /api/auth/register with role:'admin' in body still creates user with role='analyst' (not first user). (c) First-ever user registration creates admin. (d) POST /api/auth/register with duplicate email returns 409. (e) POST /api/auth/login with correct credentials returns token. (f) POST /api/auth/login with wrong password returns 401. Use beforeAll to connect memory server, afterAll to disconnect. Import app from src/app.js (it exports { app } already).",
+    "11. Run: cd server && npm test — all three test files should pass."
+  ],
+  "acceptance_criteria": [
+    "express.static('/uploads') is NOT in app.js.",
+    "GET /api/files/:id/download endpoint exists and requires authentication.",
+    "database.js falls back to memory server ONLY when USE_MEMORY_DB=true; otherwise exits on connection failure.",
+    "client/src/services/socket.js uses VITE_SOCKET_URL env var.",
+    "client/src/services/api.js uses VITE_API_URL env var.",
+    "client/.env.example exists.",
+    "server/__tests__/hash.test.js passes: cd server && npm test -- --testPathPattern=hash.",
+    "server/__tests__/signature.test.js passes: cd server && npm test -- --testPathPattern=signature.",
+    "server/__tests__/auth.test.js passes: cd server && npm test -- --testPathPattern=auth.",
+    ".gitignore includes server/.env and client/.env entries."
+  ],
+  "verification": [
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\server' && node -e \"const src=require('fs').readFileSync('./src/app.js','utf8'); console.log('No static uploads:', !src.includes(\\\"static(config.upload\\\"));\"",
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\client' && node -e \"const src=require('fs').readFileSync('./src/services/socket.js','utf8'); console.log('Uses VITE_SOCKET_URL:', src.includes('VITE_SOCKET_URL'));\"",
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\server' && npm test -- --forceExit 2>&1 | tail -30"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

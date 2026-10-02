@@ -1,0 +1,14 @@
+{
+  "name": "file-integrity-checker",
+  "version": "1.0.0",
+  "description": "File Integrity Checker Using SHA-256 — Cryptography and Network Security Mini-Project",
+  "scripts": {
+    "dev": "npm run dev --prefix client",
+    "build": "npm run build --prefix client",
+    "preview": "npm run preview --prefix client",
+    "install:client": "npm install --prefix client"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

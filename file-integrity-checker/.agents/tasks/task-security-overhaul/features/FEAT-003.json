@@ -1,0 +1,30 @@
+{
+  "id": "FEAT-003",
+  "type": "fix",
+  "description": "Fix data isolation for dashboard, alerts (display side), and report generation. These are independent of FEAT-002's per-resource guards but depend on SecurityAlert.createdBy existing (FEAT-001). Dashboard currently issues global queries with no user filter — analysts see everyone's stats. Reports buildReportData has no user filter. This feature also updates the verify route to use baselineSha256 (from FEAT-001) and adds hash input validation.",
+  "status": "pending",
+  "steps": [
+    "1. Modify server/src/controllers/dashboardController.js — getStats(): wrap all queries in user-scoped filters. For admin (req.user.role==='admin'): queries stay global (current behavior). For analyst: all MonitoredFile queries get filter {createdBy:req.user._id}. All MonitoredFolder queries get filter {createdBy:req.user._id}. SecurityAlert queries get filter {createdBy:req.user._id}. DigitalSignature queries get filter {createdBy:req.user._id}. IntegrityEvent queries: filter by folderId in the user's folders (query user's folderIds first, then use {folderId:{$in:userFolderIds}}). recentAuditLogs: for admin only — analysts receive empty array. alertSeverityBreakdown aggregation: add $match for createdBy filter. eventsOverTime aggregation: add folderId $in filter for analysts.",
+    "2. Modify server/src/services/reportService.js — buildReportData(): accept a second parameter userId and userRole. When userRole!=='admin', add {createdBy:userId} to MonitoredFile.find() and SecurityAlert.find(), and filter IntegrityEvent by folderId $in (user's folder IDs). Update generateCSVReport to use baselineSha256 and currentSha256 columns (field names changed in FEAT-001).",
+    "3. Modify server/src/controllers/reportController.js — generateReport(): pass req.user._id and req.user.role to buildReportData().",
+    "4. Modify server/src/routes/verify.js — POST /verify/hash: add express-validator rule: body('expectedHash').matches(/^[a-fA-F0-9]{64}$/).withMessage('expectedHash must be a 64-character hex string'). Import validate middleware and apply. Also normalize expectedHash.toLowerCase() before comparison (already done but make explicit). POST /verify/file/:id: add same 64-hex validation on any submitted hash in body; also ensure comparison uses file.baselineSha256 (change from file.sha256).",
+    "5. Modify server/src/controllers/fileController.js — verifyUploadedFile(): add express-validator rule in the route for expectedHash: body('expectedHash').matches(/^[a-fA-F0-9]{64}$/) — add this validation to the route in server/src/routes/files.js for POST /verify. Also use crypto.timingSafeEqual explicitly in compareHashes (already done in hashService.js compareHashes — verify it is used in verifyUploadedFile; if compareHashes is called, it is fine).",
+    "6. Modify server/src/routes/files.js: add express-validator body validation for POST /verify: body('expectedHash').matches(/^[a-fA-F0-9]{64}$/).withMessage('expectedHash must be a valid 64-character SHA-256 hex string'). Import body and validate.",
+    "7. Verify that recentAlerts in dashboardController are filtered by createdBy for analysts so no other user's alert data (including filePaths and hashes) leaks into the response."
+  ],
+  "acceptance_criteria": [
+    "GET /api/dashboard/stats for analyst returns only counts/events/alerts for that user's resources.",
+    "Analyst dashboard never exposes other users' file names, paths, or hashes.",
+    "Admin dashboard returns global stats (unchanged behavior).",
+    "POST /api/verify/hash with expectedHash not matching /^[a-fA-F0-9]{64}$/ returns 400.",
+    "POST /api/files/verify with invalid hash returns 400.",
+    "buildReportData scopes file and alert queries to the requesting user for analysts."
+  ],
+  "verification": [
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\server' && node -e \"const src=require('fs').readFileSync('./src/controllers/dashboardController.js','utf8'); console.log('Has role check:', src.includes(\\\"req.user.role\\\"));\"",
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\server' && node -e \"const src=require('fs').readFileSync('./src/routes/files.js','utf8'); console.log('Has expectedHash validation:', src.includes('expectedHash'));\"",
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\server' && npm test 2>&1 | tail -20"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

@@ -1,0 +1,41 @@
+{
+  "id": "FEAT-001",
+  "type": "refactor",
+  "description": "Fix the SHA-256 data architecture: split the single MonitoredFile.sha256 field into baselineSha256 + currentSha256. Add createdBy to SecurityAlert. Create KeyPair model for persistent key storage. Update all services that read/write sha256: integrityService.js (createBaseline, scanFolder), monitoringService.js (handleFileEvent), verify route, versionController. The rebaselining path requires audit log + confirmation guard in folderController. All comparisons must compare currentSha256 against baselineSha256, never overwrite baselineSha256 on a change detection.",
+  "status": "pending",
+  "steps": [
+    "1. Modify server/src/models/MonitoredFile.js: remove 'sha256' field. Add: baselineSha256 (String, required), currentSha256 (String, required), and update indexes (was sha256:1, change to baselineSha256:1 and currentSha256:1). Keep all other fields intact.",
+    "2. Modify server/src/models/SecurityAlert.js: add 'createdBy' field (ObjectId ref User, default null) and index on createdBy:1. Keep all other fields intact.",
+    "3. Create server/src/models/KeyPair.js: new Mongoose model with fields: keyId (String, unique, required), publicKey (String PEM, required), privateKeyEncrypted (String — store as-is for this demo; note in a comment that production would use KMS), createdBy (ObjectId ref User), createdAt (timestamps). Index on keyId and createdBy.",
+    "4. Modify server/src/services/integrityService.js — createBaseline(): on upsert of existing MonitoredFile, set BOTH baselineSha256 AND currentSha256 to the computed hash; this IS a rebaseline so create an audit log entry with action 'rebaseline_performed' referencing the old baselineSha256. On create of new MonitoredFile, set both fields equal. FileVersion.sha256 stays as-is. Do NOT emit emitToAll for scan:progress/scan:completed yet (FEAT-004 changes those).",
+    "5. Modify server/src/services/integrityService.js — scanFolder(): when comparing, compare currentHash against monitoredFile.baselineSha256. On MODIFIED: set monitoredFile.currentSha256 = currentHash; do NOT touch baselineSha256. FileVersion.sha256 stays the sha256 of that version snapshot. On SAFE: set monitoredFile.currentSha256 = currentHash (refresh). On DELETED: keep both baseline and current as-is, just set status='deleted'. On NEW: set both baselineSha256 and currentSha256 to computed hash, status='new'.",
+    "6. Modify server/src/services/monitoringService.js — handleFileEvent(): on 'add' re-add case: set currentSha256 only, compare against baselineSha256. On 'change': set currentSha256 only, compare against baselineSha256. On 'unlink': no hash changes, set status='deleted'. Remove references to .sha256 field — use baselineSha256/currentSha256 correctly.",
+    "7. Modify server/src/routes/verify.js — POST /file/:id: compare calculated hash against file.baselineSha256 (the trusted value). Update displayed trustedHash to reference baselineSha256. Add owner/admin check for the file (can be done inline here; full ownership middleware comes in FEAT-002).",
+    "8. Modify server/src/controllers/versionController.js — compareVersions: comparison logic already uses version.sha256 which is correct (each version snapshot). No hash field change needed here, but add ownership check on the parent file (inline guard: look up file, check req.user._id equals file.createdBy or req.user.role==='admin').",
+    "9. Modify server/src/controllers/folderController.js — createBaseline(): add a 'rebaseline' guard: if folder.baselineCreatedAt already exists, require req.body.confirm === true in the request body, otherwise return 409 with message 'Baseline already exists. Send confirm:true to rebaseline (this is a security-sensitive operation).'",
+    "10. Modify server/src/controllers/signatureController.js — generateKeys(): replace in-memory privateKeyStore with KeyPair DB model. Save keyId + publicKey + privateKeyEncrypted (store privateKey pem directly for demo) to KeyPair with createdBy=req.user._id. signFile(): look up KeyPair by keyId AND createdBy (admin can look up any), retrieve privateKeyEncrypted. getSignatureById(): add owner check.",
+    "11. Modify server/src/services/signatureService.js — signHash: change crypto.createSign('SHA256') to crypto.createSign('RSA-SHA256') and update verifySignature to use crypto.createVerify('RSA-SHA256') correspondingly. This matches the algorithm name to the RSA-SHA256 scheme properly.",
+    "12. Modify server/src/services/reportService.js — buildReportData(): update CSV report to use baselineSha256 and currentSha256 columns instead of sha256. Update column headers in generateCSVReport.",
+    "13. Modify server/src/services/alertService.js — createAlert(): accept optional createdBy param and set on SecurityAlert record.",
+    "14. Run: cd server && npm test — tests may fail until FEAT-005 adds them; that is expected. The goal here is that the server starts without crash: cd server && node -e \"require('./src/app.js')\" should not throw a syntax/require error."
+  ],
+  "acceptance_criteria": [
+    "MonitoredFile model no longer has a 'sha256' field; it has 'baselineSha256' and 'currentSha256'.",
+    "SecurityAlert model has a 'createdBy' field.",
+    "KeyPair model exists and is exported from server/src/models/KeyPair.js.",
+    "integrityService createBaseline sets both baselineSha256 and currentSha256 equal on first baseline; on rebaseline creates audit log.",
+    "integrityService scanFolder compares disk hash against baselineSha256; on MODIFIED sets only currentSha256.",
+    "monitoringService handleFileEvent uses baselineSha256 and currentSha256 correctly.",
+    "signatureService uses RSA-SHA256 for both sign and verify.",
+    "signatureController persists keys in KeyPair model, no more in-memory Map.",
+    "folderController createBaseline returns 409 when baseline exists and confirm:true is not sent.",
+    "Server starts without crash (node src/app.js exits or listens without a require error)."
+  ],
+  "verification": [
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\server' && node -e \"const m=require('./src/models/MonitoredFile'); const s=m.schema.obj; console.log('baselineSha256:', !!s.baselineSha256, 'currentSha256:', !!s.currentSha256, 'sha256:', !!s.sha256);\"",
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\server' && node -e \"require('./src/models/KeyPair'); console.log('KeyPair model OK');\"",
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\server' && npm test 2>&1 | Select-String -Pattern 'PASS|FAIL|Tests:' | head -20"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

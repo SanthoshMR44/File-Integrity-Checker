@@ -1,0 +1,7 @@
+{
+  "task_id": "task-security-overhaul",
+  "task_description": "Comprehensive security and architecture overhaul of the File Integrity Checker project: fix SHA-256 dual-field architecture, close registration admin-escalation, add IDOR protection across all controllers, isolate dashboard/alert/report data per user, secure Socket.IO event targeting, add scheduler+recovery services, harden app startup, remove unauthenticated static upload serving, add JWT/DB startup validation, write tests, fix frontend env vars.",
+  "status": "pending",
+  "feature_order": ["FEAT-001", "FEAT-002", "FEAT-003", "FEAT-004", "FEAT-005"],
+  "blocked_reason": null
+}

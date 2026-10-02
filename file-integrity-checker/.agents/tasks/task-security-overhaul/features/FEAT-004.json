@@ -1,0 +1,35 @@
+{
+  "id": "FEAT-004",
+  "type": "fix",
+  "description": "Secure Socket.IO: replace all emitToAll() for sensitive file/integrity/alert events with targeted room emissions. Add folder-access verification for subscribe:monitoring. Add emitToFolderOwner helper. Then create schedulerService.js and recoveryService.js. Fix monitoringService pause/resume/stop semantics. This feature depends on FEAT-001 (schema) and FEAT-002 (ownership/createdBy on folders) being done first.",
+  "status": "pending",
+  "steps": [
+    "1. Modify server/src/websocket/socketManager.js: (a) Add emitToFolderOwner(folderId, folderOwnerId, event, data) helper that emits to user:{folderOwnerId} AND to 'admin' room. (b) In the subscribe:monitoring handler, add authorization: look up MonitoredFolder by folderId; if not found or (folder.createdBy.toString()!==socket.userId && socket.userRole!=='admin'), emit an 'error' event and do NOT join the room. Since socketManager.js currently cannot import Mongoose models without a circular dep risk, pass a verifyFolderAccess async callback into initSocket or do the DB lookup inline using require('../models/MonitoredFolder') inside the handler (lazy require is fine here). (c) Keep emitToAll for non-sensitive events: monitoring:started, monitoring:stopped, monitoring:paused, scan:completed (these are status events, not data-leaking). ONLY replace emitToAll with targeted emits for: file:modified, file:deleted, file:created, integrity:violation, alert:new.",
+    "2. Modify server/src/services/alertService.js — createAlert(): (a) Accept createdBy (the folder owner's userId) parameter. (b) Replace emitToAll('alert:new', ...) with emitToFolderOwner(folderId, createdBy, 'alert:new', ...). When createdBy is not provided, fall back to emitToAdmins.",
+    "3. Modify server/src/services/monitoringService.js — handleFileEvent(): (a) Fetch folder owner (folder.createdBy) — add it to the startMonitoring closure by storing it in the watcher metadata. When startMonitoring is called, look up folder.createdBy and store alongside the watcher: activeWatchers.set(id, { watcher, folderOwnerId: folder.createdBy }). (b) In handleFileEvent, retrieve folderOwnerId from activeWatchers.get(folderId)?.folderOwnerId. (c) Replace all emitToAll('file:modified',...), emitToAll('file:deleted',...), emitToAll('file:created',...), emitToAll('integrity:violation',...) with emitToFolderOwner(folderId, folderOwnerId, event, data). (d) Pass createdBy:folderOwnerId to createAlert() calls. (e) Keep emitToAll for monitoring:started/stopped/paused — change to emitToFolderOwner for those as well to reduce broadcast scope.",
+    "4. Modify server/src/services/integrityService.js — createBaseline() and scanFolder(): Replace emitToAll('scan:progress',...) and emitToAll('scan:completed',...) and emitToAll('file:modified',...) etc. with emitToFolderOwner(folder._id, folder.createdBy, event, data). Pass createdBy:folder.createdBy to createAlert() calls.",
+    "5. Fix monitoringService.js pause/resume/stop semantics: (a) pauseMonitoring: close the watcher entirely (call watcher.close()) and remove from activeWatchers; set folder.status='paused' and folder.monitoringEnabled=true (monitoring is paused, not stopped). (b) resumeMonitoring: call startMonitoring(folderId) directly — do NOT call stopMonitoring first (watcher is already gone). (c) stopMonitoring: close watcher, remove from activeWatchers, set folder.monitoringEnabled=false, folder.status='idle'.",
+    "6. Create server/src/services/schedulerService.js: (a) Use a Map<folderId, NodeJS.Timeout> to store intervals. (b) Export scheduleFolder(folder): if folder.autoScan===true and folder.scanIntervalMinutes>0 and folder.baselineCreatedAt exists, set an interval of scanIntervalMinutes*60*1000 that calls integrityService.scanFolder(folder, null, 'auto_scan'). (c) Export unscheduleFolder(folderId): clear the interval. (d) Export initScheduler(): query all MonitoredFolders with autoScan:true, call scheduleFolder for each. Import in app.js after DB connect.",
+    "7. Create server/src/services/recoveryService.js: (a) Export recoverMonitoring(): query MonitoredFolder.find({ monitoringEnabled: true }). For each, call monitoringService.startMonitoring(folder._id). Log each recovery. Wrap in try/catch per folder so one failure does not block others. Import in app.js and call after initScheduler.",
+    "8. Modify server/src/app.js: restructure into an async startServer() function called at bottom. Order: (1) validateEnv (check JWT_SECRET length >= 32; warn in dev, exit(1) in prod if too short or equal to 'fallback-secret-change-me'). (2) ensureDirs. (3) await connectDB(). (4) initSocket(httpServer). (5) await initScheduler(). (6) await recoverMonitoring(). (7) httpServer.listen(). Import schedulerService and recoveryService."
+  ],
+  "acceptance_criteria": [
+    "emitToAll is NOT called for: file:modified, file:deleted, file:created, integrity:violation, alert:new.",
+    "subscribe:monitoring rejects unauthorized folder subscriptions.",
+    "emitToFolderOwner is exported from socketManager.js.",
+    "pauseMonitoring closes the chokidar watcher and sets monitoringEnabled=true.",
+    "stopMonitoring closes watcher and sets monitoringEnabled=false.",
+    "schedulerService.js exports scheduleFolder, unscheduleFolder, initScheduler.",
+    "recoveryService.js exports recoverMonitoring.",
+    "app.js startup validates JWT_SECRET and calls initScheduler + recoverMonitoring in order.",
+    "Server starts without crash."
+  ],
+  "verification": [
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\server' && node -e \"const src=require('fs').readFileSync('./src/services/monitoringService.js','utf8'); const calls=src.match(/emitToAll\\\\(/g)||[]; console.log('emitToAll calls remaining in monitoringService:', calls.length, '(should be 0 for sensitive events)');\"",
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\server' && node -e \"require('./src/services/schedulerService'); console.log('schedulerService OK');\"",
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\server' && node -e \"require('./src/services/recoveryService'); console.log('recoveryService OK');\"",
+    "cd 'c:\\Users\\Santhosh MR\\Downloads\\New folder\\file-integrity-checker\\server' && npm test 2>&1 | tail -20"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}
